@@ -1,0 +1,7 @@
+dist/
+codex-git/
+*.zip
+*.xpi
+
+.DS_Store
+Thumbs.db

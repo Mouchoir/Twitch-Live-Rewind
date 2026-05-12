@@ -1,0 +1,39 @@
+{
+  "manifest_version": 3,
+  "name": "Twitch Live Rewind",
+  "version": "1.0.0",
+  "description": "Rewind a Twitch live stream through the growing VOD without reloading the page.",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "permissions": ["storage"],
+  "host_permissions": [
+    "https://*.twitch.tv/*",
+    "https://gql.twitch.tv/*",
+    "https://usher.ttvnw.net/*",
+    "https://*.cloudfront.net/*",
+    "https://*.twitchcdn.net/*",
+    "https://*.ttvnw.net/*"
+  ],
+  "action": {
+    "default_title": "Twitch Live Rewind",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    },
+    "default_popup": "popup/popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://*.twitch.tv/*"],
+      "js": ["lib/hls.min.js", "src/content.js"],
+      "css": ["src/content.css"],
+      "run_at": "document_idle"
+    }
+  ]
+}

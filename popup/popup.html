@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Twitch Live Rewind</title>
+    <link rel="stylesheet" href="popup.css">
+  </head>
+  <body>
+    <main>
+      <h1>Twitch Live Rewind</h1>
+      <label for="rewind-delay">Delay behind live</label>
+      <div class="control-row">
+        <input id="rewind-delay" type="number" min="5" max="600" step="1">
+        <span>seconds</span>
+      </div>
+      <p id="status" role="status"></p>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>

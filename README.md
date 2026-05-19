@@ -4,6 +4,15 @@
 
 # Twitch Live Rewind
 
+<p align="center">
+  <a href="https://chromewebstore.google.com/detail/twitch-live-rewind/jcldddhnpeaifjmdgdjdfonagjonaemm?authuser=0&hl=fr&pli=1">
+    <img src="https://img.shields.io/badge/Chrome-Web_Store-4285F4?style=for-the-badge&logo=google-chrome&logoColor=white" alt="Get it on Chrome">
+  </a>
+  <a href="https://addons.mozilla.org/fr/firefox/addon/twitch-live-rewind/">
+    <img src="https://img.shields.io/badge/Firefox-Add_ons-FF7139?style=for-the-badge&logo=firefox-browser&logoColor=white" alt="Get it on Firefox">
+  </a>
+</p>
+
 Add instant rewind to Twitch live streams.
 
 Twitch Live Rewind adds a small `Rewind` button directly on the Twitch player, so you can jump a few seconds behind the live broadcast without refreshing the page or leaving the stream. Choose how far behind live playback starts, enjoy the replay at your own pace, then stay behind or click `Live` to return to the real live player.
@@ -16,13 +25,6 @@ Twitch Live Rewind adds a small `Rewind` button directly on the Twitch player, s
 ## How It Works
 
 Twitch Live Rewind looks for the live stream's growing VOD and plays it in an overlay above the normal Twitch player. The original live player stays in place, so returning to live is fast and simple.
-
-## Supported Browsers
-
-- Chrome and Chromium-based browsers
-- Firefox
-
-Store releases are planned for normal installs and automatic updates.
 
 ## Settings
 

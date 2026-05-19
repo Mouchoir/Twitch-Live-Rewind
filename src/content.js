@@ -1,4 +1,4 @@
-﻿(() => {
+(() => {
   "use strict";
 
   const TWITCH_CLIENT_ID = "kimne78kx3ncx6brgo4mv6wki5h1ko";
@@ -58,7 +58,7 @@
   }
 
   function log(...args) {
-    console.error("[Twitch Live Rewind]", ...args);
+    console.log("[Twitch Live Rewind]", ...args);
   }
 
   function getChannelFromPath() {
@@ -84,12 +84,14 @@
     return mediaSource.isTypeSupported(`video/mp4; codecs="${codec},mp4a.40.2"`);
   }
 
-  function findPlayerContainer() {
-    const video = document.querySelector("video");
+  function getContainer() {
+    const video = document.querySelector("video:not(.tlr-overlay video)") || document.querySelector("video");
     if (!video) return null;
-    return video.closest("[data-a-target='video-player']") ||
-      video.closest(".video-player") ||
-      video.parentElement;
+    
+    return video.closest(".video-ref") ||
+           video.closest(".video-player__default-player") ||
+           video.closest("[data-a-target='video-player']") ||
+           video.parentElement;
   }
 
   function ensurePositioned(element) {
@@ -132,15 +134,21 @@
   }
 
   function updateControlVisibilityClass() {
-    const container = state.playerContainer;
+    const container = state.playerContainer; // still valid for overlay
+    const buttonContainer = state.button?.parentElement;
     if (!container || !state.button?.isConnected) {
       return;
     }
 
     const visible = isNativeControlsVisible(container) ||
       state.isButtonHovered ||
-      container.matches(":hover, :focus-within");
+      container.matches(":hover, :focus-within") ||
+      (buttonContainer && buttonContainer.matches(":hover, :focus-within"));
+    
     container.classList.toggle("tlr-native-controls-visible", visible);
+    if (buttonContainer && buttonContainer !== container) {
+      buttonContainer.classList.toggle("tlr-native-controls-visible", visible);
+    }
   }
 
   function markPlayerInteracting() {
@@ -158,12 +166,16 @@
     updateControlVisibilityClass();
   }
 
-  function attachPlayerInteractionListeners(container) {
+  function attachPlayerInteractionListeners(container, buttonContainer) {
     state.interactionAbortController?.abort();
     state.interactionAbortController = new AbortController();
     const listenerOptions = { signal: state.interactionAbortController.signal };
     container.addEventListener("pointermove", markPlayerInteracting, listenerOptions);
     container.addEventListener("focusin", markPlayerInteracting, listenerOptions);
+    if (buttonContainer && buttonContainer !== container) {
+      buttonContainer.addEventListener("pointermove", markPlayerInteracting, listenerOptions);
+      buttonContainer.addEventListener("focusin", markPlayerInteracting, listenerOptions);
+    }
   }
 
   function syncNativeControlsVisibility() {
@@ -183,7 +195,7 @@
   }
 
   function showMessage(text) {
-    const container = state.playerContainer || findPlayerContainer();
+    const container = state.playerContainer || getContainer();
     if (!container) return;
     ensurePositioned(container);
     const existing = container.querySelector(".tlr-message");
@@ -403,6 +415,26 @@
     container.append(overlay);
     state.overlay = overlay;
     state.video = video;
+
+    let overlayTimer;
+    const markOverlayInteracting = () => {
+      overlay.classList.add("tlr-overlay-interacting");
+      window.clearTimeout(overlayTimer);
+      overlayTimer = window.setTimeout(() => {
+        overlay.classList.remove("tlr-overlay-interacting");
+      }, 2500);
+    };
+    overlay.addEventListener("pointermove", markOverlayInteracting);
+    overlay.addEventListener("click", markOverlayInteracting);
+    
+    // Support double click for fullscreen
+    overlay.addEventListener("dblclick", () => {
+      if (!document.fullscreenElement) overlay.requestFullscreen().catch(() => {});
+      else document.exitFullscreen().catch(() => {});
+    });
+    
+    markOverlayInteracting();
+
     return video;
   }
 
@@ -500,11 +532,13 @@
 
   async function startRewind() {
     const channelLogin = getChannelFromPath();
-    const container = findPlayerContainer();
+    const container = getContainer();
     if (!channelLogin || !container) return;
 
     state.playerContainer = container;
     setButtonLoading(true);
+
+    document.body.classList.add("tlr-rewind-active");
 
     try {
       log("Starting rewind for channel", channelLogin);
@@ -522,7 +556,20 @@
 
       stopRewind({ resumeLive: false });
       pauseOriginalVideo();
+      
+      // Force hide Twitch's overlay so native HTML5 controls receive mouse events
+      const playerOverlay = document.querySelector(".video-player__overlay");
+      if (playerOverlay) {
+        playerOverlay.style.setProperty("visibility", "hidden", "important");
+        playerOverlay.style.setProperty("pointer-events", "none", "important");
+        state.hiddenPlayerOverlay = playerOverlay;
+      }
+
       const video = createOverlay(container);
+      if (state.button) {
+        // Move button into overlay so it stays visible and syncs with overlay visibility
+        state.overlay.append(state.button);
+      }
       state.currentVod = archive.vod;
       loadHls(video, playlistUrl, targetPosition);
       state.refreshTimer = window.setInterval(() => {
@@ -542,6 +589,14 @@
     const { resumeLive = true } = options;
     window.clearInterval(state.refreshTimer);
     state.refreshTimer = null;
+    
+    if (state.hiddenPlayerOverlay) {
+      state.hiddenPlayerOverlay.style.removeProperty("visibility");
+      state.hiddenPlayerOverlay.style.removeProperty("pointer-events");
+      state.hiddenPlayerOverlay = null;
+    }
+
+    document.body.classList.remove("tlr-rewind-active");
     if (state.hls) {
       state.hls.destroy();
       state.hls = null;
@@ -552,6 +607,10 @@
     }
     state.video = null;
     state.currentVod = null;
+    if (state.button && state.playerContainer && state.button.parentElement !== state.playerContainer) {
+      // Restore button positioning relative to native container
+      state.playerContainer.append(state.button);
+    }
     if (resumeLive) resumeOriginalVideo();
     updateButton(false);
     if (state.button) state.button.blur();
@@ -593,7 +652,8 @@
 
   function ensureButton() {
     const channelLogin = getChannelFromPath();
-    const container = findPlayerContainer();
+    const container = getContainer();
+    
     if (!channelLogin || !container) {
       removeButton();
       return;
@@ -603,9 +663,10 @@
     ensurePositioned(container);
 
     if (state.button?.isConnected) {
-      if (state.button.parentElement !== container) {
+      // Don't force append if it's currently inside the active overlay
+      if (state.button.parentElement !== container && state.button.parentElement !== state.overlay) {
         container.append(state.button);
-        attachPlayerInteractionListeners(container);
+        attachPlayerInteractionListeners(container, container);
       }
       return;
     }
@@ -614,6 +675,9 @@
     button.type = "button";
     button.className = "tlr-control";
     button.dataset.active = "false";
+    button.style.position = "absolute";
+    button.style.right = "12px";
+    button.style.bottom = "90px";
     button.addEventListener("mouseenter", () => {
       state.isButtonHovered = true;
       markPlayerInteracting();
@@ -633,13 +697,16 @@
     container.append(button);
     state.button = button;
     setButtonLabel("idle");
-    attachPlayerInteractionListeners(container);
+    attachPlayerInteractionListeners(container, container);
     startControlVisibilitySync();
   }
 
   function removeButton() {
     if (state.playerContainer) {
       state.playerContainer.classList.remove("tlr-native-controls-visible");
+    }
+    if (state.button?.parentElement) {
+      state.button.parentElement.classList.remove("tlr-native-controls-visible");
     }
     if (state.controlsRaf) {
       window.cancelAnimationFrame(state.controlsRaf);
@@ -675,4 +742,16 @@
   observer.observe(document.documentElement, { childList: true, subtree: true });
   window.setInterval(handleRouteChange, 1000);
   handleRouteChange();
+
+  // Intercept 'f' key for fullscreen in VOD mode
+  window.addEventListener("keydown", (e) => {
+    if (state.overlay && (e.key === "f" || e.key === "F")) {
+      if (e.target.tagName !== "INPUT" && e.target.tagName !== "TEXTAREA") {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!document.fullscreenElement) state.overlay.requestFullscreen().catch(() => {});
+        else document.exitFullscreen().catch(() => {});
+      }
+    }
+  }, { capture: true });
 })();

@@ -1,8 +1,13 @@
+body.tlr-rewind-active .video-player__overlay {
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
 .tlr-control {
   position: absolute;
   right: 12px;
-  bottom: 72px;
-  z-index: 2147483646;
+  bottom: 90px;
+  z-index: 2147483647;
   display: inline-flex;
   border: 0;
   border-radius: 4px;
@@ -57,9 +62,6 @@
   position: absolute;
   inset: 0;
   z-index: 2147483645;
-  display: flex;
-  align-items: center;
-  justify-content: center;
   background: #000000;
 }
 
@@ -67,6 +69,15 @@
   width: 100%;
   height: 100%;
   background: #000000;
+}
+
+.tlr-overlay .tlr-control {
+  opacity: 0;
+}
+
+.tlr-overlay.tlr-overlay-interacting .tlr-control,
+.tlr-overlay .tlr-control:focus-visible {
+  opacity: 1;
 }
 
 .tlr-message {

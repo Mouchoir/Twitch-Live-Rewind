@@ -108,7 +108,7 @@
 
   function isEffectivelyVisible(element, stopAt) {
     let current = element;
-    while (current && current !== document.documentElement) {
+    while (current && current !== document.body && current !== document.documentElement) {
       const style = window.getComputedStyle(current);
       if (
         current.hidden ||
@@ -181,17 +181,17 @@
   function syncNativeControlsVisibility() {
     const container = state.playerContainer;
     if (!container || !state.button?.isConnected) {
-      state.controlsRaf = null;
+      window.clearInterval(state.controlsTimer);
+      state.controlsTimer = null;
       return;
     }
 
     updateControlVisibilityClass();
-    state.controlsRaf = window.requestAnimationFrame(syncNativeControlsVisibility);
   }
 
   function startControlVisibilitySync() {
-    if (state.controlsRaf) return;
-    state.controlsRaf = window.requestAnimationFrame(syncNativeControlsVisibility);
+    if (state.controlsTimer) return;
+    state.controlsTimer = window.setInterval(syncNativeControlsVisibility, 250);
   }
 
   function showMessage(text) {
@@ -708,12 +708,12 @@
     if (state.button?.parentElement) {
       state.button.parentElement.classList.remove("tlr-native-controls-visible");
     }
-    if (state.controlsRaf) {
-      window.cancelAnimationFrame(state.controlsRaf);
+    if (state.controlsTimer) {
+      window.clearInterval(state.controlsTimer);
     }
     window.clearTimeout(state.interactionTimer);
     state.interactionAbortController?.abort();
-    state.controlsRaf = null;
+    state.controlsTimer = null;
     state.interactionTimer = null;
     state.interactionAbortController = null;
     state.isButtonHovered = false;

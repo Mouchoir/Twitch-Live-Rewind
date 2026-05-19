@@ -126,11 +126,12 @@
   }
 
   function isNativeControlsVisible(container) {
+    const root = container.closest(".video-player, .video-player__default-player") || document;
     const controls = NATIVE_CONTROL_SELECTORS
-      .flatMap((selector) => Array.from(container.querySelectorAll(selector)))
+      .flatMap((selector) => Array.from(root.querySelectorAll(selector)))
       .filter((element) => !element.closest(".tlr-overlay") && !element.classList.contains("tlr-control"));
 
-    return controls.some((element) => isEffectivelyVisible(element, container));
+    return controls.some((element) => isEffectivelyVisible(element, root));
   }
 
   function updateControlVisibilityClass() {
@@ -142,8 +143,7 @@
 
     const visible = isNativeControlsVisible(container) ||
       state.isButtonHovered ||
-      container.matches(":hover, :focus-within") ||
-      (buttonContainer && buttonContainer.matches(":hover, :focus-within"));
+      container.classList.contains("tlr-player-interacting");
     
     container.classList.toggle("tlr-native-controls-visible", visible);
     if (buttonContainer && buttonContainer !== container) {
@@ -170,11 +170,25 @@
     state.interactionAbortController?.abort();
     state.interactionAbortController = new AbortController();
     const listenerOptions = { signal: state.interactionAbortController.signal };
+    
     container.addEventListener("pointermove", markPlayerInteracting, listenerOptions);
     container.addEventListener("focusin", markPlayerInteracting, listenerOptions);
+    container.addEventListener("mouseleave", () => {
+      if (!state.isButtonHovered) {
+        container.classList.remove("tlr-player-interacting");
+        updateControlVisibilityClass();
+      }
+    }, listenerOptions);
+
     if (buttonContainer && buttonContainer !== container) {
       buttonContainer.addEventListener("pointermove", markPlayerInteracting, listenerOptions);
       buttonContainer.addEventListener("focusin", markPlayerInteracting, listenerOptions);
+      buttonContainer.addEventListener("mouseleave", () => {
+        if (!state.isButtonHovered) {
+          container.classList.remove("tlr-player-interacting");
+          updateControlVisibilityClass();
+        }
+      }, listenerOptions);
     }
   }
 

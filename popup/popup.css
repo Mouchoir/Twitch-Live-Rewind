@@ -33,7 +33,7 @@ label {
   gap: 8px;
 }
 
-input {
+input[type="number"] {
   width: 88px;
   box-sizing: border-box;
   border: 1px solid #514869;
@@ -47,6 +47,21 @@ input {
 span {
   color: #c7c0db;
   font-size: 13px;
+}
+
+.toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+  cursor: pointer;
+}
+
+.toggle-row input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: #9147ff;
 }
 
 p {

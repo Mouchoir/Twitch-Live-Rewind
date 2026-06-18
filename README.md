@@ -33,6 +33,12 @@ Click the extension icon to choose how far behind live the rewind should start.
 - Default delay: `20` seconds
 - Minimum delay: `5` seconds
 - Maximum delay: `600` seconds
+- Arrow key shortcuts: enabled by default and can be disabled in the extension popup
+
+Press the left arrow key once to start Rewind. Each additional press moves playback
+backward by the configured delay. While Rewind is active, the right arrow key moves
+playback forward by the same delay. The shortcuts are ignored while typing in an
+input, textarea, select, or editable field.
 
 ## Good To Know
 

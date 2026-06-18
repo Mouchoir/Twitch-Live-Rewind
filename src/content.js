@@ -8,6 +8,7 @@
   const PLAYLIST_REFRESH_MS = 15000;
   const NEAR_END_SECONDS = 4;
   const STORAGE_KEY = "rewindDelaySeconds";
+  const KEYBOARD_REWIND_STORAGE_KEY = "keyboardRewindEnabled";
   const WEB_EXTENSION = globalThis.browser || globalThis.chrome;
   const BUTTON_TEXT = {
     idle: "Rewind",
@@ -48,7 +49,9 @@
     controlsRaf: null,
     isButtonHovered: false,
     interactionTimer: null,
-    interactionAbortController: null
+    interactionAbortController: null,
+    keyboardRewindEnabled: false,
+    isStartingRewind: false
   };
 
   function clampDelay(value) {
@@ -224,11 +227,18 @@
 
   async function getSettings() {
     try {
-      const result = await WEB_EXTENSION.storage.sync.get({ [STORAGE_KEY]: DEFAULT_DELAY_SECONDS });
-      return { rewindDelaySeconds: clampDelay(result[STORAGE_KEY]) };
+      const result = await WEB_EXTENSION.storage.sync.get({
+        [STORAGE_KEY]: DEFAULT_DELAY_SECONDS,
+        [KEYBOARD_REWIND_STORAGE_KEY]: true
+      });
+      return {
+        rewindDelaySeconds: clampDelay(result[STORAGE_KEY]),
+        keyboardRewindEnabled: result[KEYBOARD_REWIND_STORAGE_KEY] !== false
+      };
     } catch {
       return {
-        rewindDelaySeconds: clampDelay(window.localStorage.getItem(STORAGE_KEY))
+        rewindDelaySeconds: clampDelay(window.localStorage.getItem(STORAGE_KEY)),
+        keyboardRewindEnabled: window.localStorage.getItem(KEYBOARD_REWIND_STORAGE_KEY) !== "false"
       };
     }
   }
@@ -545,10 +555,13 @@
   }
 
   async function startRewind() {
+    if (state.isStartingRewind) return;
+
     const channelLogin = getChannelFromPath();
     const container = getContainer();
     if (!channelLogin || !container) return;
 
+    state.isStartingRewind = true;
     state.playerContainer = container;
     setButtonLoading(true);
 
@@ -595,8 +608,63 @@
       showMessage(error.message || "Unable to rewind this live stream.");
       stopRewind();
     } finally {
+      state.isStartingRewind = false;
       setButtonLoading(false);
     }
+  }
+
+  async function seekByConfiguredDelay(direction) {
+    if (!state.video || !state.overlay) {
+      if (direction > 0) return;
+      await startRewind();
+      return;
+    }
+
+    const { rewindDelaySeconds } = await getSettings();
+    const targetTime = state.video.currentTime + direction * rewindDelaySeconds;
+    const maximumTime = Number.isFinite(state.video.duration)
+      ? Math.max(0, state.video.duration - 0.25)
+      : targetTime;
+    state.video.currentTime = Math.min(maximumTime, Math.max(0, targetTime));
+    if (state.video.paused) {
+      state.video.play().catch(() => {});
+    }
+  }
+
+  function isEditableTarget(target) {
+    if (!(target instanceof Element)) return false;
+    return target.isContentEditable || Boolean(target.closest("input, textarea, select, [contenteditable]"));
+  }
+
+  function handleKeyboardRewind(event) {
+    const direction = event.key === "ArrowLeft"
+      ? -1
+      : event.key === "ArrowRight"
+        ? 1
+        : 0;
+
+    if (
+      direction === 0 ||
+      (direction > 0 && (!state.video || !state.overlay)) ||
+      event.repeat ||
+      !state.keyboardRewindEnabled ||
+      event.altKey ||
+      event.ctrlKey ||
+      event.metaKey ||
+      event.shiftKey ||
+      isEditableTarget(event.target) ||
+      !getChannelFromPath() ||
+      !getContainer()
+    ) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    seekByConfiguredDelay(direction).catch((error) => {
+      log(error);
+      showMessage(error.message || "Unable to seek in this live stream.");
+    });
   }
 
   function stopRewind(options = {}) {
@@ -757,10 +825,22 @@
   window.setInterval(handleRouteChange, 1000);
   handleRouteChange();
 
-  // Intercept 'f' key for fullscreen in VOD mode
+  getSettings().then(({ keyboardRewindEnabled }) => {
+    state.keyboardRewindEnabled = keyboardRewindEnabled;
+  });
+
+  WEB_EXTENSION.storage?.onChanged?.addListener((changes, areaName) => {
+    if (areaName === "sync" && changes[KEYBOARD_REWIND_STORAGE_KEY]) {
+      state.keyboardRewindEnabled = changes[KEYBOARD_REWIND_STORAGE_KEY].newValue !== false;
+    }
+  });
+
+  // Intercept keyboard controls before Twitch handles them.
   window.addEventListener("keydown", (e) => {
+    handleKeyboardRewind(e);
+
     if (state.overlay && (e.key === "f" || e.key === "F")) {
-      if (e.target.tagName !== "INPUT" && e.target.tagName !== "TEXTAREA") {
+      if (!isEditableTarget(e.target)) {
         e.preventDefault();
         e.stopPropagation();
         if (!document.fullscreenElement) state.overlay.requestFullscreen().catch(() => {});

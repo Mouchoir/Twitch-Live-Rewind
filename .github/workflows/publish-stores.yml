@@ -1,0 +1,101 @@
+name: Publish to stores
+
+# Manual only, on purpose: this pushes a real version to Chrome Web Store and
+# Firefox Add-ons. It is never triggered automatically on tag/push.
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git tag or branch to build and publish (e.g. v1.3.1)"
+        required: true
+        type: string
+      mode:
+        description: "dry-run = upload/sign only, nothing goes public. publish = go live on both stores."
+        required: true
+        type: choice
+        options:
+          - dry-run
+          - publish
+        default: dry-run
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-stores
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    # Gated by the "stores-production" environment's required reviewer rule:
+    # the job pauses for approval before any secret below is exposed to it.
+    environment: stores-production
+    steps:
+      - name: Checkout ${{ inputs.ref }}
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Build Chrome package
+        shell: pwsh
+        run: pwsh -File scripts/build-chrome.ps1
+
+      - name: Build Firefox package
+        shell: pwsh
+        run: pwsh -File scripts/build-firefox.ps1
+
+      - name: Zip Chrome package
+        shell: pwsh
+        run: Compress-Archive -Path dist/chrome/* -DestinationPath dist/chrome.zip
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Upload draft to Chrome Web Store
+        shell: pwsh
+        env:
+          CLIENT_ID: ${{ secrets.CHROME_CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.CHROME_CLIENT_SECRET }}
+          REFRESH_TOKEN: ${{ secrets.CHROME_REFRESH_TOKEN }}
+          EXTENSION_ID: ${{ secrets.CHROME_EXTENSION_ID }}
+        run: |
+          npx --yes chrome-webstore-upload-cli@3 upload `
+            --source dist/chrome.zip `
+            --extension-id $env:EXTENSION_ID `
+            --client-id $env:CLIENT_ID `
+            --client-secret $env:CLIENT_SECRET `
+            --refresh-token $env:REFRESH_TOKEN
+
+      - name: Publish on Chrome Web Store
+        if: ${{ inputs.mode == 'publish' }}
+        shell: pwsh
+        env:
+          CLIENT_ID: ${{ secrets.CHROME_CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.CHROME_CLIENT_SECRET }}
+          REFRESH_TOKEN: ${{ secrets.CHROME_REFRESH_TOKEN }}
+          EXTENSION_ID: ${{ secrets.CHROME_EXTENSION_ID }}
+        run: |
+          npx --yes chrome-webstore-upload-cli@3 publish `
+            --extension-id $env:EXTENSION_ID `
+            --client-id $env:CLIENT_ID `
+            --client-secret $env:CLIENT_SECRET `
+            --refresh-token $env:REFRESH_TOKEN
+
+      # channel=unlisted just signs the xpi (no public submission) for dry-run;
+      # channel=listed submits the version to your public AMO listing for review.
+      - name: Sign / submit to Firefox Add-ons
+        shell: pwsh
+        env:
+          AMO_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
+          AMO_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+        run: |
+          $channel = "${{ inputs.mode }}" -eq "publish" ? "listed" : "unlisted"
+          npx --yes web-ext@8 sign `
+            --api-key $env:AMO_ISSUER `
+            --api-secret $env:AMO_SECRET `
+            --source-dir dist/firefox `
+            --artifacts-dir web-ext-artifacts `
+            --channel $channel

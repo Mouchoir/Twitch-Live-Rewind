@@ -26,11 +26,11 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  publish:
+  # Builds both packages once; publish-chrome and publish-firefox each consume
+  # their own artifact independently so a failure on one store never blocks
+  # or skips the other (they used to share one job/step sequence).
+  build:
     runs-on: ubuntu-latest
-    # Gated by the "stores-production" environment's required reviewer rule:
-    # the job pauses for approval before any secret below is exposed to it.
-    environment: stores-production
     steps:
       - name: Checkout ${{ inputs.ref }}
         uses: actions/checkout@v4
@@ -49,6 +49,32 @@ jobs:
         shell: pwsh
         run: Compress-Archive -Path dist/chrome/* -DestinationPath dist/chrome.zip
 
+      - name: Upload Chrome artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: chrome-zip
+          path: dist/chrome.zip
+          retention-days: 1
+
+      - name: Upload Firefox artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: firefox-dist
+          path: dist/firefox
+          retention-days: 1
+
+  publish-chrome:
+    needs: build
+    runs-on: ubuntu-latest
+    # Gated by the "stores-production" environment's required reviewer rule:
+    # the job pauses for approval before any secret below is exposed to it.
+    environment: stores-production
+    steps:
+      - name: Download Chrome artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: chrome-zip
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -63,7 +89,7 @@ jobs:
           EXTENSION_ID: ${{ secrets.CHROME_EXTENSION_ID }}
         run: |
           npx --yes chrome-webstore-upload-cli@3 upload `
-            --source dist/chrome.zip `
+            --source chrome.zip `
             --extension-id $env:EXTENSION_ID `
             --client-id $env:CLIENT_ID `
             --client-secret $env:CLIENT_SECRET `
@@ -83,6 +109,22 @@ jobs:
             --client-id $env:CLIENT_ID `
             --client-secret $env:CLIENT_SECRET `
             --refresh-token $env:REFRESH_TOKEN
+
+  publish-firefox:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: stores-production
+    steps:
+      - name: Download Firefox artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: firefox-dist
+          path: dist/firefox
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
 
       # channel=unlisted just signs the xpi (no public submission) for dry-run;
       # channel=listed submits the version to your public AMO listing for review.

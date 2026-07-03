@@ -70,3 +70,19 @@ p {
   color: #9bd5b5;
   font-size: 12px;
 }
+
+.report-link {
+  display: block;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid #2a2438;
+  color: #a99fc9;
+  font-size: 12px;
+  text-decoration: none;
+}
+
+.report-link:hover,
+.report-link:focus-visible {
+  color: #9147ff;
+  text-decoration: underline;
+}

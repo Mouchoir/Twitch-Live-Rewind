@@ -7,6 +7,7 @@
   const MAX_DELAY_SECONDS = 600;
   const PLAYLIST_REFRESH_MS = 15000;
   const NEAR_END_SECONDS = 4;
+  const LIVE_STATUS_TTL_MS = 30000;
   const STORAGE_KEY = "rewindDelaySeconds";
   const KEYBOARD_REWIND_STORAGE_KEY = "keyboardRewindEnabled";
   const WEB_EXTENSION = globalThis.browser || globalThis.chrome;
@@ -51,7 +52,11 @@
     interactionTimer: null,
     interactionAbortController: null,
     keyboardRewindEnabled: false,
-    isStartingRewind: false
+    isStartingRewind: false,
+    liveStatusChannel: null,
+    liveStatusIsLive: false,
+    liveStatusCheckedAt: 0,
+    liveStatusPending: null
   };
 
   function clampDelay(value) {
@@ -65,8 +70,15 @@
   }
 
   function getChannelFromPath() {
-    const segment = window.location.pathname.split("/").filter(Boolean)[0] || "";
+    const segments = window.location.pathname.split("/").filter(Boolean);
+    const segment = segments[0] || "";
     if (!segment || ["videos", "directory", "downloads", "settings", "subscriptions", "wallet"].includes(segment)) {
+      return null;
+    }
+    // "/<channel>/clip/<slug>" (and the clips gallery/"v" VOD route) render their own
+    // short-form video player in place of the live player - never a live stream.
+    const subRoute = (segments[1] || "").toLowerCase();
+    if (["clip", "clips", "v"].includes(subRoute)) {
       return null;
     }
     return /^[a-zA-Z0-9_]{3,25}$/.test(segment) ? segment.toLowerCase() : null;
@@ -90,7 +102,7 @@
   function getContainer() {
     const video = document.querySelector("video:not(.tlr-overlay video)") || document.querySelector("video");
     if (!video) return null;
-    
+
     return video.closest(".video-ref") ||
            video.closest(".video-player__default-player") ||
            video.closest("[data-a-target='video-player']") ||
@@ -147,7 +159,7 @@
     const visible = isNativeControlsVisible(container) ||
       state.isButtonHovered ||
       container.classList.contains("tlr-player-interacting");
-    
+
     container.classList.toggle("tlr-native-controls-visible", visible);
     if (buttonContainer && buttonContainer !== container) {
       buttonContainer.classList.toggle("tlr-native-controls-visible", visible);
@@ -173,7 +185,7 @@
     state.interactionAbortController?.abort();
     state.interactionAbortController = new AbortController();
     const listenerOptions = { signal: state.interactionAbortController.signal };
-    
+
     container.addEventListener("pointermove", markPlayerInteracting, listenerOptions);
     container.addEventListener("focusin", markPlayerInteracting, listenerOptions);
     container.addEventListener("mouseleave", () => {
@@ -260,6 +272,53 @@
       throw new Error(payload.errors[0].message || "Twitch GraphQL returned an error");
     }
     return payload.data;
+  }
+
+  async function isChannelLive(channelLogin) {
+    const now = Date.now();
+    if (state.liveStatusChannel === channelLogin && now - state.liveStatusCheckedAt < LIVE_STATUS_TTL_MS) {
+      return state.liveStatusIsLive;
+    }
+    if (state.liveStatusPending?.channel === channelLogin) {
+      return state.liveStatusPending.promise;
+    }
+
+    const promise = (async () => {
+      try {
+        const data = await gql(`
+          query LiveRewindStreamStatus($login: String!) {
+            user(login: $login) {
+              stream {
+                id
+              }
+            }
+          }
+        `, { login: channelLogin });
+        return Boolean(data?.user?.stream?.id);
+      } catch (error) {
+        log("Unable to check live status for", channelLogin, error);
+        // Unknown status: default to hidden, it's the safer choice for a VOD page.
+        return false;
+      }
+    })();
+
+    state.liveStatusPending = { channel: channelLogin, promise };
+    const isLive = await promise;
+    state.liveStatusChannel = channelLogin;
+    state.liveStatusIsLive = isLive;
+    state.liveStatusCheckedAt = Date.now();
+    if (state.liveStatusPending?.promise === promise) {
+      state.liveStatusPending = null;
+    }
+    return isLive;
+  }
+
+  // Synchronous read of the last known live status for a channel. Keydown handling
+  // can't await the GraphQL check, so it relies on ensureButton()'s background polling
+  // having already populated this cache. Unknown/stale-channel status defaults to "not live"
+  // so hotkeys fail safe by leaving the native player controls alone.
+  function isKnownLive(channelLogin) {
+    return state.liveStatusChannel === channelLogin && state.liveStatusIsLive === true;
   }
 
   async function getLiveArchive(channelLogin) {
@@ -450,13 +509,13 @@
     };
     overlay.addEventListener("pointermove", markOverlayInteracting);
     overlay.addEventListener("click", markOverlayInteracting);
-    
+
     // Support double click for fullscreen
     overlay.addEventListener("dblclick", () => {
       if (!document.fullscreenElement) overlay.requestFullscreen().catch(() => {});
       else document.exitFullscreen().catch(() => {});
     });
-    
+
     markOverlayInteracting();
 
     return video;
@@ -583,7 +642,7 @@
 
       stopRewind({ resumeLive: false });
       pauseOriginalVideo();
-      
+
       // Force hide Twitch's overlay so native HTML5 controls receive mouse events
       const playerOverlay = document.querySelector(".video-player__overlay");
       if (playerOverlay) {
@@ -642,6 +701,7 @@
       : event.key === "ArrowRight"
         ? 1
         : 0;
+    const channelLogin = getChannelFromPath();
 
     if (
       direction === 0 ||
@@ -653,8 +713,12 @@
       event.metaKey ||
       event.shiftKey ||
       isEditableTarget(event.target) ||
-      !getChannelFromPath() ||
-      !getContainer()
+      !channelLogin ||
+      !getContainer() ||
+      // Not currently rewinding and the channel isn't confirmed live (offline
+      // channel showing a VOD/rerun, a clip, etc.): let the native player
+      // handle the arrow keys instead of hijacking them.
+      (!state.overlay && !isKnownLive(channelLogin))
     ) {
       return;
     }
@@ -671,7 +735,7 @@
     const { resumeLive = true } = options;
     window.clearInterval(state.refreshTimer);
     state.refreshTimer = null;
-    
+
     if (state.hiddenPlayerOverlay) {
       state.hiddenPlayerOverlay.style.removeProperty("visibility");
       state.hiddenPlayerOverlay.style.removeProperty("pointer-events");
@@ -735,7 +799,7 @@
   function ensureButton() {
     const channelLogin = getChannelFromPath();
     const container = getContainer();
-    
+
     if (!channelLogin || !container) {
       removeButton();
       return;
@@ -744,6 +808,30 @@
     state.playerContainer = container;
     ensurePositioned(container);
 
+    // Never yank the button away while a rewind is actively playing - the
+    // user still needs it to get back to the live edge even if the stream
+    // just ended in the meantime.
+    if (state.overlay) {
+      positionButton(container);
+      return;
+    }
+
+    isChannelLive(channelLogin).then((live) => {
+      // Bail out if the route/channel/container changed while we were checking.
+      if (getChannelFromPath() !== channelLogin || getContainer() !== container) return;
+      if (state.overlay) return; // a rewind started while the check was in flight
+
+      if (!live) {
+        // Offline channel showing a VOD/rerun on the same URL: no live edge to rewind from.
+        removeButton();
+        return;
+      }
+
+      positionButton(container);
+    });
+  }
+
+  function positionButton(container) {
     if (state.button?.isConnected) {
       // Don't force append if it's currently inside the active overlay
       if (state.button.parentElement !== container && state.button.parentElement !== state.overlay) {
